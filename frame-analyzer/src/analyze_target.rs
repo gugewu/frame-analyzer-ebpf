@@ -31,6 +31,7 @@ pub struct AnalyzeTarget {
     pub uprobe: UprobeHandler,
     last_ktime_ns: Option<u64>,
     frametimes: VecDeque<Duration>,
+    last_valid_frametime: Option<Duration>, // 缓存上次有效帧时间
 }
 
 impl AnalyzeTarget {
@@ -39,27 +40,32 @@ impl AnalyzeTarget {
             uprobe,
             last_ktime_ns: None,
             frametimes: VecDeque::with_capacity(144),
+            last_valid_frametime: None,
         }
     }
 
     pub fn update(&mut self) -> Option<Duration> {
+        // 尝试从 Ring Buffer 读取新数据
         let mut ring = self.uprobe.ring().unwrap();
-        let item = ring.next()?;
-        let event = unsafe { trans(&item) };
+        if let Some(item) = ring.next() {
+            let event = unsafe { trans(&item) };
 
-        if let Some(last_ns) = self.last_ktime_ns {
-            let frametime_ns = event.ktime_ns.saturating_sub(last_ns);
-            if (MIN_FRAME_NS..=MAX_FRAME_NS).contains(&frametime_ns) {
-                if self.frametimes.len() >= 144 {
-                    self.frametimes.pop_back();
+            if let Some(last_ns) = self.last_ktime_ns {
+                let frametime_ns = event.ktime_ns.saturating_sub(last_ns);
+                if (MIN_FRAME_NS..=MAX_FRAME_NS).contains(&frametime_ns) {
+                    if self.frametimes.len() >= 144 {
+                        self.frametimes.pop_back();
+                    }
+                    let duration = Duration::from_nanos(frametime_ns);
+                    self.frametimes.push_front(duration);
+                    self.last_valid_frametime = Some(duration);
                 }
-                self.frametimes
-                    .push_front(Duration::from_nanos(frametime_ns));
             }
+            self.last_ktime_ns = Some(event.ktime_ns);
         }
-        self.last_ktime_ns = Some(event.ktime_ns);
 
-        self.frametimes.front().copied()
+        // 返回队首有效值，若无则返回缓存的上次有效值
+        self.frametimes.front().copied().or(self.last_valid_frametime)
     }
 }
 
