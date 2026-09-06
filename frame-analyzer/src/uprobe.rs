@@ -42,19 +42,22 @@ impl UprobeHandler {
 
         let program: &mut UProbe = bpf.program_mut("frame_analyzer_ebpf").unwrap().try_into()?;
         program.load()?;
+        // 首选：BufferQueueProducer::queueBuffer（更底层，更稳定）
         program.attach(
-            Some("_ZN7android7Surface11queueBufferERKNS_2spINS_13GraphicBufferEEERKNS1_INS_5FenceEEEPNS_24SurfaceQueueBufferOutputE"),
+            Some("_ZN7android19BufferQueueProducer11queueBufferEiRKNS_22IGraphicBufferProducer16QueueBufferInputEPNS1_17QueueBufferOutputE"),
             0,
             "/system/lib64/libgui.so",
             Some(pid),
         ).or_else(|_e1| {
+            // 备选：Surface::queueBuffer（上层封装）
             program.attach(
-                Some("_ZN7android7Surface11queueBufferERKNS_2spINS_13GraphicBufferEEERKNS_23SurfaceQueueBufferInputEPNS_24SurfaceQueueBufferOutputE"),
+                Some("_ZN7android7Surface11queueBufferERKNS_2spINS_13GraphicBufferEEERKNS1_INS_5FenceEEEPNS_24SurfaceQueueBufferOutputE"),
                 0,
                 "/system/lib64/libgui.so",
                 Some(pid),
             )
         }).or_else(|_e2| {
+            // 最后备选：hook_queueBuffer（兼容旧版）
             program.attach(
                 Some("_ZN7android7Surface16hook_queueBufferEP13ANativeWindowP19ANativeWindowBufferi"),
                 0,
