@@ -22,16 +22,14 @@ use frame_analyzer_ebpf_common::FrameSignal;
 
 use crate::uprobe::UprobeHandler;
 
-// Track the global queueBuffer cadence instead of per-buffer cadence.
-// On devices with deep buffer queues, per-buffer deltas can alias to 1/N FPS.
-const MIN_FRAME_NS: u64 = 1_000_000;
-const MAX_FRAME_NS: u64 = 200_000_000;
+const MIN_FRAME_NS: u64 = 1_000_000;      // 1ms
+const MAX_FRAME_NS: u64 = 200_000_000;    // 200ms
 
 pub struct AnalyzeTarget {
     pub uprobe: UprobeHandler,
     last_ktime_ns: Option<u64>,
     frametimes: VecDeque<Duration>,
-    last_valid_frametime: Option<Duration>, // 缓存上次有效帧时间
+    last_valid_frametime: Option<Duration>, // 缓存上次有效值
 }
 
 impl AnalyzeTarget {
@@ -45,7 +43,6 @@ impl AnalyzeTarget {
     }
 
     pub fn update(&mut self) -> Option<Duration> {
-        // 尝试从 Ring Buffer 读取新数据
         let mut ring = self.uprobe.ring().unwrap();
         if let Some(item) = ring.next() {
             let event = unsafe { trans(&item) };
@@ -64,7 +61,7 @@ impl AnalyzeTarget {
             self.last_ktime_ns = Some(event.ktime_ns);
         }
 
-        // 返回队首有效值，若无则返回缓存的上次有效值
+        // 优先返回队首有效值，若无则返回缓存
         self.frametimes.front().copied().or(self.last_valid_frametime)
     }
 }
