@@ -54,7 +54,8 @@ fn install_ebpf_linker() -> Result<()> {
 
 fn build_ebpf() -> Result<()> {
     let current_dir = env::current_dir()?;
-    let project_path = current_dir.parent().unwrap().join("frame-analyzer-ebpf");
+    let workspace_root = current_dir.parent().unwrap();
+    let project_path = workspace_root.join("frame-analyzer-ebpf");
     let out_dir = env::var("OUT_DIR")?;
     let out_dir = Path::new(&out_dir);
     let target_dir = out_dir.join("ebpf_target");
@@ -81,13 +82,20 @@ fn build_ebpf() -> Result<()> {
         #[cfg(not(debug_assertions))]
         ebpf_args.push("--release");
 
-        Command::new("cargo")
+        let status = Command::new("cargo")
             .arg("build")
-            .args(ebpf_args)
+            .args(&ebpf_args)
+            .arg("-p")
+            .arg("frame-analyzer-ebpf")
             .env_remove("RUSTUP_TOOLCHAIN")
-            .current_dir(&project_path)
+            .current_dir(workspace_root)
             .env("PATH", add_path(bin)?)
             .status()?;
+        if !status.success() {
+            panic!(
+                "Critical: Failed to build frame-analyzer-ebpf. Check the output above for linker errors."
+            );
+        }
     } else {
         #[cfg(debug_assertions)]
         ebpf_args.push("--debug");
@@ -96,7 +104,7 @@ fn build_ebpf() -> Result<()> {
         let status = Command::new("cargo")
             .args(["install", "frame-analyzer-ebpf"])
             .arg("--force")
-            .args(ebpf_args)
+            .args(&ebpf_args)
             .args(["--root", target_dir_str])
             .env_remove("RUSTUP_TOOLCHAIN")
             .env("PATH", add_path(bin)?)
@@ -117,6 +125,29 @@ fn build_ebpf() -> Result<()> {
         let to = &prefix_dir.join("frame-analyzer-ebpf");
         fs::rename(target_dir.join("bin").join("frame-analyzer-ebpf"), to)?;
     }
+
+    // 把实际生成出来的 eBPF 二进制路径，通过环境变量传给编译 ebpf.rs 的 rustc
+    #[cfg(debug_assertions)]
+    let profile = "debug";
+    #[cfg(not(debug_assertions))]
+    let profile = "release";
+
+    let produced = target_dir
+        .join("bpfel-unknown-none")
+        .join(profile)
+        .join("frame-analyzer-ebpf");
+
+    if !produced.exists() {
+        anyhow::bail!(
+            "Critical: eBPF binary not found at {}",
+            produced.display()
+        );
+    }
+
+    println!(
+        "cargo:rustc-env=FRAME_ANALYZER_EBPF_PATH={}",
+        produced.display()
+    );
 
     Ok(())
 }
